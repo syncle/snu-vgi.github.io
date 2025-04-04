@@ -1,0 +1,138 @@
+---
+layout: post
+title:  "GenAI Lecture: Latent Diffusion Models (LDM)"
+date:   2025-03-25 14:52:12 +0900
+categories: Gen AI Lecture
+---
+
+### 1. 개요 (Introduction)
+
+Diffusion Model(DM)은 이미지 생성 문제에서 점차적으로 노이즈를 제거하는 **Reverse Diffusion** 과정을 학습하는 방법으로, 최근 고품질 이미지 생성에 두각을 나타내고 있습니다. 그러나 픽셀(Pixel) 공간에서 직접 작동하는 기존의 대부분의 DM은 **메모리 사용량과 연산량이 방대**하여, 고해상도 이미지를 효율적으로 학습하거나 생성하기가 어렵다는 문제가 있습니다.
+
+이를 해결하기 위해 제안된 **Latent Diffusion Models(LDM)** 은, **오토인코더(Autoencoder)** 로 추출한 **잠재(Latent) 공간**에서 Diffusion 과정을 수행합니다. 이 방식은 **고해상도 이미지 생성**과 **낮은 계산량**을 동시에 만족시켜, 이전 픽셀 기반 Diffusion Model보다 매우 효율적인 접근으로 주목받고 있습니다.
+
+---
+
+### 2. 배경 지식 (Background)
+
+#### 2.1 기존 Diffusion Model과 한계점
+
+- **Forward Process**  
+  - 원본 이미지를 점차적으로 노이즈화: $$x_0 \to x_1 \to \dots \to x_T$$  
+  - $$x_T$$는 거의 가우시안 잡음 상태가 됨
+- **Reverse Process**  
+  - 학습된 노이즈 제거 모델 $$\epsilon_\theta$$가 역방향으로 이미지를 복원  
+  - 단계가 많아질수록 연산 비용 및 메모리 사용량 증가
+- **문제점**  
+  - 고해상도 픽셀 공간에서의 연산량 기하급수 증가  
+  - 수백~수천 스텝을 거쳐야 하므로 샘플링 속도도 느림
+
+#### 2.2 오토인코더 기반 잠재 공간
+
+- 오토인코더로 이미지의 **본질적인 구조**는 남기고, **불필요한 세부(고주파수 정보)**는 축소  
+- Perceptual Loss, Patch-based Adversarial Loss 등을 통해 **시각적 품질** 손실 최소화  
+- Latent 공간 차원 축소 덕분에 **Diffusion을 훨씬 효율적**으로 학습 가능
+
+---
+
+### 3. LDM의 기본 원리 (Method)
+
+LDM은 **오토인코더**와 **Diffusion Model**을 결합한 **2단계 학습** 접근을 취합니다.  
+(1) **Perceptual Autoencoder 학습** → (2) **잠재 공간에서 Diffusion 학습**의 순서로 진행됩니다.
+
+#### 3.1 Perceptual Autoencoder 학습
+
+1. **구조**  
+   - **Encoder $$E$$**: 원본 이미지 $$x$$를 잠재 벡터 $$z$$로 매핑  
+     $$z = E(x), \quad z \in \mathbb{R}^{h \times w \times c}$$
+   - **Decoder $$D$$**: 잠재 벡터 $$z$$를 다시 원본 해상도로 복원  
+     $$\hat{x} = D(z) = D(E(x))$$
+2. **학습 목표**  
+   - **재구성 손실(Reconstruction Loss)**: $$\| x - \hat{x} \|_1$$ 또는 VGG 기반 **Perceptual Loss** 사용  
+   - **PatchGAN Discriminator** 활용해 지역(real/fake) 구분 → **Patch-based Adversarial Loss**  
+   - **Regularization**: 잠재 공간이 무분별하게 확산되지 않도록,  
+     - *KL-regularized* (VAE 유사)  
+     - *VQ-regularized* (VQGAN 유사)  
+3. **효과**  
+   - 원본 이미지의 **중요·의미론적 특징**은 유지, 노이즈나 세부 잡음은 제거  
+   - 고해상도 이미지를 처리해도, Latent 공간은 해상도가 크게 축소되어 효율적
+
+#### 3.2 Latent 공간에서의 Diffusion Model
+
+1. **기본 구조**  
+   - 오토인코더로 얻은 잠재 벡터 $$z$$를 직접 Diffusion 과정에 투입  
+   - Diffusion Model $$\epsilon_\theta$$는 UNet 기반으로 구현 (2D Conv, Skip Connection, Attention 등)
+2. **학습 손실**  
+   - 기존 Diffusion과 동일하게, 노이즈를 예측하는 방식으로 학습  
+   $$\mathcal{L}_{\text{LDM}} = \mathbb{E}_{z_0, \epsilon, t}\Bigl[\|\epsilon - \epsilon_\theta(z_t, t)\|^2\Bigr]$$
+   - $$z_0$$에 노이즈를 점차적으로 추가해 $$z_t$$를 얻고, 이를 $$\epsilon_\theta$$가 예측
+3. **Sampling (생성 과정)**  
+   - 임의의 노이즈 상태 $$z_T$$를 역으로 추론 → $$z_0$$ 복원 → 디코더로 고해상도 이미지 복원  
+   - Latent 차원 축소로, **픽셀 기반보다 훨씬 적은 계산량**으로도 충분히 고품질 이미지를 생성
+4. **Conditioning** (Optional)  
+   - 텍스트 임베딩, 세그멘테이션 맵 등 다양한 조건 $$y$$를 입력받아 생성 과정을 제어  
+   - **Cross-Attention**(텍스트-이미지) 또는 **Concat**(공간 맵) 방식으로 UNet에 주입  
+   - Inpainting, Super-Resolution, Text-to-Image 등 **다양한 응용** 가능
+
+#### 3.3 장점 및 구현상 특징
+
+- **학습 비용 감소**  
+  - Pixel-space가 아닌 Latent-space이므로, 동일 해상도 대비 훨씬 적은 연산 및 메모리 사용  
+- **표현력 유지**  
+  - Autoencoder가 의미론적 정보는 잘 보존하고, 불필요한 세부 정보를 걸러냄  
+- **여러 단계 확장**  
+  - 단순 Unconditional Generation 뿐 아니라 Inpainting, Super-Resolution, Text-to-Image 등으로 쉽게 확장 가능  
+- **오토인코더 의존성**  
+  - Latent 공간의 성능이 곧 최종 결과 품질과 직결  
+  - 오토인코더 학습이 제대로 되지 않으면, 재구성 품질 저하 가능
+
+---
+
+### 4. 응용 사례 (Applications)
+
+#### 4.1 고해상도 이미지 생성 (High-Resolution Synthesis)
+
+- FFHQ, LSUN 등 대규모·고해상도 데이터셋에 적용
+- 기존 픽셀 기반 DM 대비 **메모리·학습 시간** 절감
+- FID, IS, Precision-Recall 등 지표에서 SOTA 수준 성능 보고
+
+#### 4.2 초해상화 (Super-Resolution)
+
+- 저해상도 이미지를 잠재 공간에서 복원
+- SR3 등 픽셀기반 모델과 비교 시, **단계 수 감소** + **유사 혹은 더 나은 품질**
+- Perceptual 지표(FID, LPIPS) 관점에서 매우 우수
+
+#### 4.3 인페인팅 (Inpainting)
+
+- 이미지 일부가 마스킹된 상황에서 잠재 공간에서 채우기
+- GAN 기반 인페인팅 대비 모드 커버리지↑ (다양한 가능성)
+- Cross-Attention 또는 Concat 방식으로 마스크 정보를 주입
+
+#### 4.4 텍스트-이미지 생성 (Text-to-Image)
+
+- 텍스트 임베딩(예: BERT, CLIP)을 UNet 내부 Attention으로 결합
+- MS-COCO, LAION-400M 등 텍스트-이미지 쌍 대량으로 학습
+- Classifier-free Guidance 등을 활용해 생성 품질·일관성 제어 가능
+
+---
+
+### 5. 결론 (Conclusion)
+
+- **핵심 요약**: Latent Diffusion Models는 **오토인코더** 기반 **잠재 공간**에서 **Diffusion**을 수행함으로써,  
+  1) **학습·추론 효율**을 크게 높이고  
+  2) **고해상도 이미지**를 안정적으로 생성  
+  - 다양한 조건부 생성 과제에도 쉽게 확장 가능
+- **한계**  
+  - 여러 Diffusion 스텝을 거치는 것은 여전히 느릴 수 있으나, 기존 픽셀 기반 방법보다 획기적 단축  
+  - 오토인코더의 재구성 품질이 충분히 높아야 함
+- **의의**  
+  - 고해상도 이미지 생성에서의 **GPU 비용** 문제를 해결하고, **연구 및 산업적 활용** 범위 확대
+
+---
+
+### 6. 참고문헌 (References)
+
+1. **High-Resolution Image Synthesis with Latent Diffusion Models**, Rombach et al., CVPR 2022.  
+2. **Denoising Diffusion Probabilistic Models**, Ho et al., NeurIPS 2020.  
+3. **Diffusion Models Beat GANs on Image Synthesis**, Dhariwal & Nichol, NeurIPS 2021.  
+4. **Taming Transformers for High-Resolution Image Synthesis**, Esser et al., CVPR 2021.
